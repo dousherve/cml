@@ -40,12 +40,17 @@ Key concepts:
 - `cml_config`: all runtime settings + optional callbacks
   - `log_fn`: structured log callback (`cml_log_event`)
   - `progress_fn`: progress callback (`cml_progress_event`)
+- `cml_create()` copies `cml_config` by value into the handle; changing your original config struct after `cml_create()` does not affect the handle (recreate to apply changes).
 - Inputs:
   - `cml_add_chapter_id`, `cml_add_title_id`, `cml_add_url`
 - Run:
   - `cml_run`
 
 The CLI (`src/cml_cli.c`) parses args first, then instantiates the library handle once the final config is known (important: `-o/--out` must work regardless of option ordering).
+
+Progress events:
+
+- `cml_progress_event` includes optional title/chapter metadata and counters (`title_author`, `title_done/title_total`, `chapter_no/chapter_title`, `chapter_done/chapter_total`) in addition to `stage/done/total`.
 
 ## Internal architecture (files)
 
@@ -74,5 +79,10 @@ The CLI (`src/cml_cli.c`) parses args first, then instantiates the library handl
 ## Current limitations / follow-ups
 
 - Protobuf decoding is “minimal-field” and may break if MangaPlus schema changes; adding a small compatibility test (decode a known captured response) would help.
-- Progress callback is intentionally simple; could add per-title/chapter events and ETA.
+- CLI UI is implemented via `progress_fn` (the CLI currently disables `log_fn`) and renders a TTY-focused, single-line updating chapter status plus a final summary.
 - Concurrency is currently sequential; parallel downloads could be added but must consider throttling.
+
+## Example consumer
+
+- `examples/download_chapter.c`: minimal library consumer that downloads chapter `1013146`
+  - Build (after `make`): `cc -Iinclude examples/download_chapter.c lib/libcml.a -lcurl -lzip -o download_chapter`
