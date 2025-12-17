@@ -4,7 +4,7 @@
 
 ## Provenance
 
-This project was implemented with the OpenAI Codex CLI agent (model: GPT-5.2), based on the design and behavior of `hurlenko/mloader` (https://github.com/hurlenko/mloader).
+This project was implemented with the OpenAI Codex CLI agent (model: GPT-5.2), based on the design and behavior of [hurlenko/mloader](https://github.com/hurlenko/mloader).
 
 ## Build
 
