@@ -1,4 +1,6 @@
 build/
+bin/
+lib/
 cml_downloads/
 
 .DS_Store

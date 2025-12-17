@@ -2,7 +2,8 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <errno.h>
+#include <time.h>
 
 typedef struct {
   uint8_t *data;
@@ -35,6 +36,14 @@ void cml_bytes_free(cml_bytes *b) {
 }
 
 static int is_retryable_long(long code) { return code == 429 || (code >= 500 && code <= 599); }
+
+static void cml_sleep_usec(unsigned usec) {
+  struct timespec ts;
+  ts.tv_sec = (time_t)(usec / 1000000u);
+  ts.tv_nsec = (long)((usec % 1000000u) * 1000u);
+  while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+  }
+}
 
 cml_status cml_http_get(cml *h, const char *url, cml_bytes *out) {
   if (!h || !h->curl || !url || !out) return CML_ERR_INVALID;
@@ -80,9 +89,8 @@ cml_status cml_http_get(cml *h, const char *url, cml_bytes *out) {
     }
 
     unsigned usec = (unsigned)(250000u * (1u << (unsigned)(attempt - 1)));
-    usleep(usec);
+    cml_sleep_usec(usec);
   }
 
   return CML_ERR_HTTP;
 }
-
