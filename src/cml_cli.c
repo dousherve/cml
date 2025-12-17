@@ -3,14 +3,139 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 
 #include "cml/cml.h"
+
+static const char *CML_CLI_VERSION = "0.1.0";
+
+typedef struct {
+  int tty;
+  int color;
+  int printed_any_title;
+  int chapter_line_active;
+
+  const char *title;
+  const char *author;
+  uint32_t title_done;
+  uint32_t title_total;
+  const char *chapter_no;
+  const char *chapter_title;
+  uint32_t chapter_done;
+  uint32_t chapter_total;
+  uint32_t pages_done;
+  uint32_t pages_total;
+
+  uint32_t chapters_done_total;
+  uint64_t pages_done_total;
+} cli_ui;
+
+static int str_eq(const char *a, const char *b) {
+  if (a == b) return 1;
+  if (!a || !b) return 0;
+  return strcmp(a, b) == 0;
+}
+
+static int ui_color_enabled(void) {
+  const char *no = getenv("NO_COLOR");
+  return !(no && *no);
+}
+
+static const char *c_rst(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[0m" : ""; }
+static const char *c_bold(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[1m" : ""; }
+static const char *c_dim(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[2m" : ""; }
+static const char *c_grn(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[32m" : ""; }
+static const char *c_red(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[31m" : ""; }
+static const char *c_mag(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[35m" : ""; }
+static const char *c_cyn(const cli_ui *ui) { return (ui && ui->color) ? "\x1b[36m" : ""; }
+
+static void ui_clear_line(cli_ui *ui) {
+  if (!ui || !ui->tty) return;
+  fputs("\r\x1b[2K", stderr);
+}
+
+static void ui_end_chapter_line(cli_ui *ui) {
+  if (!ui || !ui->tty) return;
+  if (!ui->chapter_line_active) return;
+  fputc('\n', stderr);
+  ui->chapter_line_active = 0;
+}
+
+static const char *ui_manga_bullet(const cli_ui *ui) { return (ui && ui->tty) ? "•" : "*"; }
+static const char *ui_chapter_bullet(const cli_ui *ui) { return (ui && ui->tty) ? "↳" : "-"; }
+static const char *ui_chapter_mark_down(const cli_ui *ui) { return (ui && ui->tty) ? "↓" : "v"; }
+static const char *ui_chapter_mark_done(const cli_ui *ui) { return (ui && ui->tty) ? "✓" : "OK"; }
+static const char *ui_mark_ok(const cli_ui *ui) { return (ui && ui->tty) ? "✓" : "OK"; }
+static const char *ui_mark_err(const cli_ui *ui) { return (ui && ui->tty) ? "✗" : "ERROR"; }
+
+static void ui_print_prefix(cli_ui *ui, int indent_spaces, const char *bullet, uint32_t idx, uint32_t total) {
+  for (int i = 0; i < indent_spaces; i++) fputc(' ', stderr);
+  if (bullet && *bullet) fputs(bullet, stderr);
+  fputc(' ', stderr);
+  if (idx && total) fprintf(stderr, "%s%u/%u)%s ", c_dim(ui), idx, total, c_rst(ui));
+}
+
+static void ui_print_chapter_prefix(cli_ui *ui, int done) {
+  ui_print_prefix(ui, 2, ui_chapter_bullet(ui), ui->chapter_done, ui->chapter_total);
+  fprintf(stderr, "%s%s%s ", c_dim(ui), done ? ui_chapter_mark_done(ui) : ui_chapter_mark_down(ui), c_rst(ui));
+}
+
+static void ui_print_title(cli_ui *ui, const char *title, const char *author) {
+  if (!ui || !title || !*title) return;
+  ui_end_chapter_line(ui);
+  fputc('\n', stderr);
+
+  ui_print_prefix(ui, 0, ui_manga_bullet(ui), ui->title_done, ui->title_total);
+  fprintf(stderr, "%s%s%s%s", c_bold(ui), c_cyn(ui), title, c_rst(ui));
+  if (author && *author) fprintf(stderr, "%s — %s%s", c_dim(ui), author, c_rst(ui));
+  fputc('\n', stderr);
+  ui->printed_any_title = 1;
+}
+
+static void ui_render_chapter_done(cli_ui *ui, const char *chapter_no, const char *chapter_title, uint32_t pages_total) {
+  if (!ui || !ui->tty) return;
+
+  ui_clear_line(ui);
+  ui_print_chapter_prefix(ui, 1);
+  fprintf(stderr, "%s%sChapter%s", c_bold(ui), c_mag(ui), c_rst(ui));
+  if (chapter_no && *chapter_no) fprintf(stderr, " %s%s%s", c_bold(ui), chapter_no, c_rst(ui));
+  if (chapter_title && *chapter_title) fprintf(stderr, " %s—%s %s", c_dim(ui), c_rst(ui), chapter_title);
+  if (pages_total) fprintf(stderr, " %s(%u pages)%s", c_dim(ui), pages_total, c_rst(ui));
+  fputc('\n', stderr);
+  ui->chapter_line_active = 0;
+}
+
+static void ui_render_chapter_progress(cli_ui *ui, uint32_t done, uint32_t total) {
+  if (!ui || !ui->tty) return;
+  if (!ui->chapter_no && !ui->chapter_title) return;
+
+  ui_clear_line(ui);
+
+  ui_print_chapter_prefix(ui, 0);
+
+  fprintf(stderr, "%s%sChapter%s", c_bold(ui), c_mag(ui), c_rst(ui));
+
+  if (ui->chapter_no && *ui->chapter_no) {
+    fprintf(stderr, " %s%s%s", c_bold(ui), ui->chapter_no, c_rst(ui));
+  }
+  if (ui->chapter_title && *ui->chapter_title) {
+    fprintf(stderr, " %s—%s %s", c_dim(ui), c_rst(ui), ui->chapter_title);
+  }
+
+  if (total) {
+    fprintf(stderr, " %s—%s %s%s%u/%u pages%s", c_dim(ui), c_rst(ui), c_bold(ui), c_grn(ui), done, total, c_rst(ui));
+  } else {
+    fprintf(stderr, " %s—%s %s%s%u pages%s", c_dim(ui), c_rst(ui), c_bold(ui), c_grn(ui), done, c_rst(ui));
+  }
+  fflush(stderr);
+  ui->chapter_line_active = 1;
+}
 
 static void print_help(FILE *out) {
   fputs(
       "Usage: cml [OPTIONS] [URLS]...\n"
       "\n"
-      "C MANGA Plus Loader\n"
+      "Download manga from MANGA Plus."
       "\n"
       "Options:\n"
       "  --version                       Show version and exit.\n"
@@ -68,25 +193,58 @@ static int env_bool(const char *key, int fallback) {
   return fallback;
 }
 
-static void default_log(void *user, const cml_log_event *ev) {
-  (void)user;
-  const char *lvl = "INFO";
-  if (ev->level == CML_LOG_ERROR) lvl = "ERROR";
-  else if (ev->level == CML_LOG_WARN) lvl = "WARN";
-  else if (ev->level == CML_LOG_DEBUG) lvl = "DEBUG";
-  fprintf(stderr, "[%s] %s\n", lvl, ev->message ? ev->message : "");
-}
-
 static void default_progress(void *user, const cml_progress_event *ev) {
-  (void)user;
-  if (!ev || !ev->stage) return;
-  if (ev->total) {
-    fprintf(stderr, "\r[%s] %u/%u", ev->stage, ev->done, ev->total);
-  } else {
-    fprintf(stderr, "\r[%s] %u", ev->stage, ev->done);
+  cli_ui *ui = (cli_ui *)user;
+  if (!ui || !ev || !ev->stage) return;
+
+  if (!str_eq(ev->stage, "images")) return;
+
+  if (!str_eq(ui->title, ev->title_name) || !str_eq(ui->author, ev->title_author)) {
+    ui->title = ev->title_name;
+    ui->author = ev->title_author;
+    ui->title_done = ev->title_done;
+    ui->title_total = ev->title_total;
+    ui->chapter_no = NULL;
+    ui->chapter_title = NULL;
+    ui->chapter_done = 0;
+    ui->chapter_total = 0;
+    ui->pages_done = 0;
+    ui->pages_total = 0;
+    ui_print_title(ui, ui->title, ui->author);
   }
-  fflush(stderr);
-  if (ev->total && ev->done == ev->total) fputc('\n', stderr);
+
+  const char *ch_no = ev->chapter_no ? ev->chapter_no : NULL;
+  const char *ch_title = (ev->chapter_title && ev->chapter_title[0]) ? ev->chapter_title : ev->chapter_name;
+  if (!str_eq(ui->chapter_no, ch_no) || !str_eq(ui->chapter_title, ch_title) || ui->pages_total != ev->total ||
+      ui->chapter_done != ev->chapter_done || ui->chapter_total != ev->chapter_total) {
+    ui->chapter_no = ch_no;
+    ui->chapter_title = ch_title;
+    ui->chapter_done = ev->chapter_done;
+    ui->chapter_total = ev->chapter_total;
+    ui->pages_done = 0;
+    ui->pages_total = ev->total;
+  }
+
+  ui->pages_done = ev->done;
+  if (ev->total && ev->done == ev->total) {
+    ui->chapters_done_total += 1;
+    ui->pages_done_total += (uint64_t)ev->total;
+  }
+  if (ui->tty) {
+    ui_render_chapter_progress(ui, ui->pages_done, ui->pages_total);
+    if (ev->total && ev->done == ev->total) {
+      ui_render_chapter_done(ui, ui->chapter_no, ui->chapter_title, ui->pages_total);
+    }
+  } else {
+    if (ev->total && ev->done == ev->total) {
+      ui_print_prefix(ui, 2, ui_chapter_bullet(ui), ui->chapter_done, ui->chapter_total);
+      fprintf(stderr, "Chapter");
+      if (ui->chapter_no && *ui->chapter_no) fprintf(stderr, " %s", ui->chapter_no);
+      if (ui->chapter_title && *ui->chapter_title) fprintf(stderr, " — %s", ui->chapter_title);
+      if (ui->pages_total) fprintf(stderr, " (%u pages)", ui->pages_total);
+      fputc('\n', stderr);
+    }
+  }
 }
 
 typedef struct {
@@ -127,6 +285,26 @@ int main(int argc, char **argv) {
     }
   }
 
+  cli_ui ui = {
+      .tty = isatty(fileno(stderr)) ? 1 : 0,
+      .color = 0,
+      .printed_any_title = 0,
+      .chapter_line_active = 0,
+      .title = NULL,
+      .author = NULL,
+      .title_done = 0,
+      .title_total = 0,
+      .chapter_no = NULL,
+      .chapter_title = NULL,
+      .chapter_done = 0,
+      .chapter_total = 0,
+      .pages_done = 0,
+      .pages_total = 0,
+      .chapters_done_total = 0,
+      .pages_done_total = 0,
+  };
+  ui.color = ui.tty && ui_color_enabled();
+
   cml_config cfg = {
       .out_dir = out_dir,
       .output = output,
@@ -137,9 +315,9 @@ int main(int argc, char **argv) {
       .last_only = false,
       .include_chapter_title = false,
       .chapter_subdir = false,
-      .log_fn = default_log,
+      .log_fn = NULL,
       .progress_fn = default_progress,
-      .user = NULL,
+      .user = &ui,
   };
 
   u32_list chapter_ids = {0};
@@ -214,7 +392,7 @@ int main(int argc, char **argv) {
         u32_list_free(&title_ids);
         return 0;
       case 'V':
-        printf("cml 0.1.0\n");
+        printf("cml %s\n", CML_CLI_VERSION);
         u32_list_free(&chapter_ids);
         u32_list_free(&title_ids);
         return 0;
@@ -291,8 +469,24 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (ui.tty) {
+    fprintf(stderr, "%s%scml%s %s\n", c_bold(&ui), c_cyn(&ui), c_rst(&ui), CML_CLI_VERSION);
+    fprintf(stderr, "%sFetching metadata...%s\n", c_dim(&ui), c_rst(&ui));
+  } else {
+    fprintf(stderr, "cml %s\n", CML_CLI_VERSION);
+    fprintf(stderr, "Fetching metadata...\n");
+  }
+  fflush(stderr);
+
   cml_status st = cml_run(h);
-  if (st != CML_OK) fprintf(stderr, "cml: %s\n", cml_status_string(st));
+  if (ui.tty && ui.chapter_line_active) ui_end_chapter_line(&ui);
+  fputc('\n', stderr);
+  if (st == CML_OK) {
+    fprintf(stderr, "%s%s%s%s Downloaded %u chapters (%llu pages).%s\n", c_bold(&ui), c_grn(&ui), ui_mark_ok(&ui), c_rst(&ui),
+            ui.chapters_done_total, (unsigned long long)ui.pages_done_total, c_rst(&ui));
+  } else {
+    fprintf(stderr, "%s%s%s %s%s\n", c_bold(&ui), c_red(&ui), ui_mark_err(&ui), cml_status_string(st), c_rst(&ui));
+  }
   cml_destroy(h);
   return (st == CML_OK) ? 0 : 1;
 }

@@ -46,7 +46,14 @@ typedef void (*cml_log_fn)(void *user, const cml_log_event *ev);
 typedef struct {
   const char *stage;        // "metadata" | "images" | "export"
   const char *title_name;   // optional, valid during callback
+  const char *title_author; // optional, valid during callback
+  uint32_t title_done;      // optional, 0 when unknown
+  uint32_t title_total;     // optional, 0 when unknown
   const char *chapter_name; // optional, valid during callback
+  const char *chapter_no;   // optional, valid during callback (e.g. "60")
+  const char *chapter_title; // optional, valid during callback
+  uint32_t chapter_done;    // optional, 0 when unknown
+  uint32_t chapter_total;   // optional, 0 when unknown
   uint32_t done;
   uint32_t total;  // 0 when unknown
 } cml_progress_event;
@@ -93,4 +100,3 @@ const char *cml_status_string(cml_status st);
 #ifdef __cplusplus
 }  // extern "C"
 #endif
-

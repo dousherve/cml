@@ -268,7 +268,9 @@ static const cml_last_page *viewer_last_page(const cml_manga_viewer *v) {
   return NULL;
 }
 
-static cml_status download_one_chapter(cml *h, const cml_title *title, uint32_t chapter_id, viewer_cache *vc) {
+static cml_status download_one_chapter(cml *h, const cml_title *title, uint32_t title_done, uint32_t title_total,
+                                       uint32_t chapter_done, uint32_t chapter_total, uint32_t chapter_id,
+                                       viewer_cache *vc) {
   cml_manga_viewer *viewer = NULL;
   cml_status st = viewer_cached_get(h, vc, chapter_id, &viewer);
   if (st != CML_OK) return st;
@@ -298,7 +300,18 @@ static cml_status download_one_chapter(cml *h, const cml_title *title, uint32_t 
     uint32_t stop = page_no + 1;
     page_no += is_range ? 2 : 1;
 
-    cml_progress_event ev = {.stage = "images", .title_name = title->name, .chapter_name = viewer->chapter_name, .done = done, .total = total};
+    cml_progress_event ev = {.stage = "images",
+                             .title_name = title->name,
+                             .title_author = title->author,
+                             .title_done = title_done,
+                             .title_total = title_total,
+                             .chapter_name = viewer->chapter_name,
+                             .chapter_no = lp->current_chapter.name,
+                             .chapter_title = lp->current_chapter.sub_title,
+                             .chapter_done = chapter_done,
+                             .chapter_total = chapter_total,
+                             .done = done,
+                             .total = total};
     cml_progress(h, &ev);
 
     if (cml_exporter_skip_image(exp, is_range, start, stop)) continue;
@@ -343,7 +356,9 @@ cml_status cml_loader_run(cml *h) {
     return st;
   }
 
+  uint32_t title_total = (uint32_t)map.len;
   for (size_t i = 0; i < map.len; i++) {
+    uint32_t title_done = (uint32_t)(i + 1);
     uint32_t title_id = map.items[i].title_id;
     cml_title_detail *detail = NULL;
     st = detail_cached_get(h, &dc, title_id, &detail);
@@ -369,11 +384,24 @@ cml_status cml_loader_run(cml *h) {
       break;
     }
 
+    uint32_t chapter_total = (uint32_t)chap_ids.len;
     for (size_t j = 0; j < chap_ids.len; j++) {
+      uint32_t chapter_done = (uint32_t)(j + 1);
       uint32_t chapter_id = chap_ids.items[j];
-      cml_progress_event ev = {.stage = "metadata", .title_name = title->name, .chapter_name = NULL, .done = (uint32_t)(j + 1), .total = (uint32_t)chap_ids.len};
+      cml_progress_event ev = {.stage = "metadata",
+                               .title_name = title->name,
+                               .title_author = title->author,
+                               .title_done = title_done,
+                               .title_total = title_total,
+                               .chapter_name = NULL,
+                               .chapter_no = NULL,
+                               .chapter_title = NULL,
+                               .chapter_done = chapter_done,
+                               .chapter_total = chapter_total,
+                               .done = chapter_done,
+                               .total = chapter_total};
       cml_progress(h, &ev);
-      st = download_one_chapter(h, title, chapter_id, &vc);
+      st = download_one_chapter(h, title, title_done, title_total, chapter_done, chapter_total, chapter_id, &vc);
       if (st != CML_OK) {
         cml_log(h, CML_LOG_ERROR, "failed: %s", cml_status_string(st));
         break;
